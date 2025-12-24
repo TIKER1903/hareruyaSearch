@@ -286,7 +286,7 @@
 
       <section class="card">
         <h2 style="margin-top:0">生成されたURL</h2>
-        <div id="htmlOutput" class="output" aria-live="polite"><!-- ここに生成結果が入ります --></div>
+        <div id="htmlOutput" class="output" aria-live="polite"></div>
         <div class="buttons" style="margin-top:12px;">
           <button id="copyResultBtn">URL一覧をコピー</button>
         </div>
@@ -305,7 +305,6 @@
     const preview = document.getElementById("preview");
     const generateBtn = document.getElementById("generateBtn");
     const sampleBtn = document.getElementById("sampleBtn");
-    const restoreBtn = document.getElementById("restoreBtn");
     const clearBtn = document.getElementById("clearBtn");
     const copyBtn = document.getElementById("copyBtn");
     const copyResultBtn = document.getElementById("copyResultBtn");
@@ -313,7 +312,8 @@
     const selectAllBtn = document.getElementById("selectAllBtn");
     const deselectAllBtn = document.getElementById("deselectAllBtn");
 
-    const COOKIE_NAME = "hareruyaSearchState";
+    // CookieではなくlocalStorageを使用するキー名
+    const STORAGE_KEY = "hareruyaSearchState_v2";
 
     const stores = [
       "TC東京", "秋葉原", "渋谷", "吉祥寺", "千葉", "成田", "大宮", "川崎",
@@ -370,18 +370,26 @@
       storeGrid.appendChild(item);
     });
 
-    const setCookie = (name, value, days = 3) => {
-      const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toUTCString();
-      document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/`;
+    // localStorageの操作ヘルパー
+    const saveState = (value) => {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
+      } catch (e) {
+        console.error("Storage save failed", e);
+      }
     };
 
-    const getCookie = (name) => {
-      const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
-      return match ? decodeURIComponent(match[1]) : null;
+    const loadState = () => {
+      try {
+        const item = localStorage.getItem(STORAGE_KEY);
+        return item ? JSON.parse(item) : null;
+      } catch (e) {
+        return null;
+      }
     };
 
-    const deleteCookie = (name) => {
-      document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+    const clearState = () => {
+      localStorage.removeItem(STORAGE_KEY);
     };
 
     const escapeHtml = (text) =>
@@ -396,19 +404,16 @@
       const query = encodeURIComponent(cardName);
       const params = [`product=${query}`];
       
-      // 在庫オプション
       const stockOption = document.getElementById("stockOption").value;
       if (stockOption !== "") {
         params.push(`stock=${stockOption}`);
       }
       
-      // 言語オプション（日本語=1, 英語=2）
       const languageOption = document.getElementById("languageOption").value;
       if (languageOption !== "") {
         params.push(`language%5B%5D=${languageOption}`);
       }
       
-      // フォイルオプション
       const foilOption = document.getElementById("foilOption").checked;
       if (foilOption) {
         params.push(`foilFlg%5B%5D=1`);
@@ -417,7 +422,6 @@
       const queryString = params.join("&");
       
       if (!store || store === "TC東京") {
-        // 本店は従来の検索URL
         return `https://www.hareruyamtg.com/ja/products/search?${queryString}`;
       }
       const slug = storeSlugs[store];
@@ -469,7 +473,7 @@
 </main>`;
       preview.srcdoc = previewHtml;
 
-      // 入力内容をCookieに保存（3日）
+      // 入力内容をlocalStorageに保存
       const state = {
         cardName,
         stores: selectedStores,
@@ -477,11 +481,7 @@
         language: document.getElementById("languageOption").value,
         foil: document.getElementById("foilOption").checked
       };
-      try {
-        setCookie(COOKIE_NAME, JSON.stringify(state), 3);
-      } catch (_) {
-        // noop
-      }
+      saveState(state);
     };
 
     selectAllBtn.addEventListener("click", () => {
@@ -517,9 +517,9 @@
       document.getElementById("stockOption").value = "";
       document.getElementById("languageOption").value = "";
       document.getElementById("foilOption").checked = false;
-      htmlOutput.textContent = "<!-- ここに生成結果が入ります -->";
+      htmlOutput.textContent = "";
       preview.srcdoc = "";
-      deleteCookie(COOKIE_NAME);
+      clearState();
       cardNameInput.focus();
     });
 
@@ -549,55 +549,35 @@
       await copyToClipboard(htmlOutput.textContent, copyResultBtn, "コピーしました", "URL一覧をコピー");
     });
 
-    // Cookie から前回の入力を復元
-    const restoreFromCookie = (withFeedback = false) => {
-      const raw = getCookie(COOKIE_NAME);
-      if (!raw) {
-        if (withFeedback) {
-          const original = restoreBtn.textContent;
-          restoreBtn.textContent = "保存された情報がありません";
-          setTimeout(() => (restoreBtn.textContent = original), 1200);
-        }
-        return false;
+    // ページ読み込み時に復元
+    const restoreFromStorage = () => {
+      const state = loadState();
+      if (!state) return false;
+
+      if (state.cardName) cardNameInput.value = state.cardName;
+      if (Array.isArray(state.stores)) {
+        state.stores.forEach((s) => {
+          const cb = document.getElementById(`store-${s}`);
+          if (cb) cb.checked = true;
+        });
       }
-      try {
-        const state = JSON.parse(raw);
-        if (state.cardName) cardNameInput.value = state.cardName;
-        if (Array.isArray(state.stores)) {
-          state.stores.forEach((s) => {
-            const cb = document.getElementById(`store-${s}`);
-            if (cb) cb.checked = true;
-          });
-        }
-        if (typeof state.stock === "string") {
-          document.getElementById("stockOption").value = state.stock;
-        }
-        if (typeof state.language === "string") {
-          document.getElementById("languageOption").value = state.language;
-        }
-        if (typeof state.foil === "boolean") {
-          document.getElementById("foilOption").checked = state.foil;
-        }
-        if (withFeedback) {
-          const original = restoreBtn.textContent;
-          restoreBtn.textContent = "復元しました";
-          setTimeout(() => (restoreBtn.textContent = original), 1200);
-        }
-        return true;
-      } catch (_) {
-        // JSON parse failure -> ignore
-        return false;
+      if (typeof state.stock === "string") {
+        document.getElementById("stockOption").value = state.stock;
       }
+      if (typeof state.language === "string") {
+        document.getElementById("languageOption").value = state.language;
+      }
+      if (typeof state.foil === "boolean") {
+        document.getElementById("foilOption").checked = state.foil;
+      }
+      return true;
     };
 
-    const restoredOnLoad = restoreFromCookie();
+    const restoredOnLoad = restoreFromStorage();
     if (restoredOnLoad) {
-      // 入力を自動復元した場合、その内容で表示を更新
+      // 復元できた場合は結果も表示する
       render();
     }
-
-    restoreBtn.addEventListener("click", () => restoreFromCookie(true));
   </script>
 </body>
 </html>
-
